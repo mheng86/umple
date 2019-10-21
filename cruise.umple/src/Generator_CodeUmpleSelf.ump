@@ -13,11 +13,11 @@ class UmpleSelfGenerator
 {
 
   fileExtension= ".umpself";
-
+  int count = 0;
   public void generate()
   {
-    CodeGenerator internalGen = generateBasedOn();
-    internalGen.prepare();
+    //CodeGenerator internalGen = generateBasedOn();
+    //internalGen.prepare();
 
     StringBuilder code = new StringBuilder();
     ArrayList<Association> externalAssociations = new ArrayList<Association>();
@@ -98,7 +98,7 @@ class UmpleSelfGenerator
 
       for (StateMachine sm : uClass.getStateMachines())
       {
-        generateStateMachine(sm, 1, code);
+        generateStateMachine(sm, 1, code,false);
       }
 
       for (Method m : uClass.getMethods())
@@ -123,7 +123,7 @@ class UmpleSelfGenerator
 
     model.setCode(code.toString());
     writeModel();
-    internalGen.postpare();
+    //internalGen.postpare();
   }
 
   private void generateMethod(Method m, StringBuilder code)
@@ -161,25 +161,25 @@ class UmpleSelfGenerator
     }
   }
 
-  private void generateStateMachine(StateMachine sm, int level, StringBuilder code)
+  private void generateStateMachine(StateMachine sm, int level, StringBuilder code, boolean isRecursiveCall)
   {
     String baseSpace = spacer(level * 2 + (level - 1) * 2);
-    code.append(StringFormatter.format("{1}{0} {\n", name(sm), baseSpace));
+    if(level == 1)
+      code.append(StringFormatter.format("{1}{0} {\n", name(sm), baseSpace));
     boolean isFirst;
     boolean hasConsumedActivity;
     
     // Issue 1019 - Place Null state at the end because the default "enter" methods are no longer generated
     State nullState = sm.getNullState();
-    
     for (State state : sm.getStates())
     {
       // Issue 1019
       if (nullState != null && state.equals(nullState)) 
-      {
-        continue;
-      }
-      
-      code.append(StringFormatter.format("{1}  {0} {", state.getName(), baseSpace));
+        continue;  
+      if(state.isFinalState())
+        code.append(StringFormatter.format("{1}  final {0} {", state.getName(), baseSpace));
+      else
+        code.append(StringFormatter.format("{1}  {0} {", state.getName(), baseSpace));  
       isFirst = true;
       hasConsumedActivity = false;
       for (Action a : state.getActions())
@@ -191,7 +191,7 @@ class UmpleSelfGenerator
         code.append(StringFormatter.format("{0}    ", baseSpace));
         code.append(StringFormatter.format("{0} / { {1} }\n", a.getActionType(), a.getActionCode()));
         isFirst = false;
-      }
+      } 
 
       for (Transition t : state.getTransitions())
       {
@@ -206,22 +206,24 @@ class UmpleSelfGenerator
           gen.setModel(getModel());
           code.append(StringFormatter.format("[{0}] ", t.getGuard().getCondition(gen)));
         }
-        
+
         Event event = t.getEvent();
-        
-        if (event.isAutoTransition() && state.hasActivities())
+        if(event != null)
         {
-          hasConsumedActivity = true;
-          for (Activity activity : state.getActivities())
+          if (event.isAutoTransition() && state.hasActivities())
           {
-            code.append(StringFormatter.format("do { {0} }", activity.getCodeblock().toString()));
+            hasConsumedActivity = true;
+            for (Activity activity : state.getActivities())
+            {
+              code.append(StringFormatter.format("do { {0} }", activity.getCodeblock().toString()));
+            }
           }
+          else if (!event.isAutoTransition())
+          { 
+            code.append(StringFormatter.format("{0}", t.getEvent().getName()));
+          }
+          generateParams(t.getEvent().getParams(), code, true);
         }
-        else if (!event.isAutoTransition())
-        {
-          code.append(StringFormatter.format("{0}", t.getEvent().getName()));
-        }
-        generateParams(t.getEvent().getParams(), code, true);
         code.append(" -> ");
         if (t.getAction() != null)
         {
@@ -231,10 +233,16 @@ class UmpleSelfGenerator
         code.append("\n");
         isFirst = false;
       }
-      
+
+      int numberofStateMachine = state.getNestedStateMachines().size();
+      if(state.hasNestedStateMachines())
+        count =0;
       for (StateMachine subSm : state.getNestedStateMachines())
       {
-        generateStateMachine(subSm, level+1, code);
+        count ++;
+        generateStateMachine(subSm, level+1, code,true);
+        if (numberofStateMachine > 1 && count != numberofStateMachine)
+          code.append(StringFormatter.format("{0}  ||\n", baseSpace));
       }
 
       for (Activity activity : state.getActivities()){
@@ -249,18 +257,19 @@ class UmpleSelfGenerator
           isFirst = false;
         }
       }
-
       code.append(StringFormatter.format("{0}  }\n", baseSpace));
-    }
-    
+    } // end for
+
     // Issue 1019
+    /*
     if (nullState != null)
     {
       code.append(StringFormatter.format("{1}  {0} {", nullState.getName(), baseSpace));
       code.append(StringFormatter.format("{0}  }\n", baseSpace));
     }
-    
-    code.append(StringFormatter.format("{0}}\n", baseSpace));
+    */     
+    if (!isRecursiveCall)
+      code.append(StringFormatter.format("{0}}\n", baseSpace));
   }
 
   private String name(StateMachine sm)
